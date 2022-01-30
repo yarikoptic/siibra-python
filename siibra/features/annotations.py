@@ -83,7 +83,7 @@ class Annotation:
 
         store_ann = input('Save annotation on Ebrains drive? (y/N)').lower()
         if store_ann == 'y':
-            self.store_annotation(adding_annotation, category, name)
+            self.store_annotation(adding_annotation, name)
 
     def _input_coordinates(self, category):
 
