@@ -24,6 +24,7 @@ from .ebrains import EbrainsRegionalFeatureQuery
 from .cells import RegionalCellDensityExtractor
 from .ieeg import IEEG_SessionQuery
 from .voi import VolumeOfInterestQuery
+from .annotations import Annotation
 #from .morphologies import NeuroMorphoQuery
 
 from .query import FeatureQuery
