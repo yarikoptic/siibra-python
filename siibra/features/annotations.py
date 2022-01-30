@@ -171,7 +171,7 @@ class Annotation:
 
         for ann in self.annotations.values():
             # Filter by template if id exists
-            if (template_id and template_id != ann['coordinateSpace']['@id']) \
+            if not ann or (template_id and template_id != ann['coordinateSpace']['@id']) \
                     or (annotation_id and annotation_id != ann['@id']):
                 continue
 
