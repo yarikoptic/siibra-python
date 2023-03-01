@@ -692,7 +692,7 @@ class TemplateflowConnector(RepositoryConnector):
 
         RepositoryConnector.__init__(
             self,
-            base_url=f"https://raw.githubusercontent.com/templateflow/tpl-{abrvname}"
+            base_url=f"https://templateflow.s3.amazonaws.com/tpl-{abrvname}"
         )
         self._abrvname = abrvname
         self._description = HttpRequest(
@@ -747,3 +747,10 @@ class TemplateflowConnector(RepositoryConnector):
             if any(w in file.lower() for w in spec.split()):
                 matches.append(file)
         return matches
+
+    def get_loader(self, filename, decode_func=None):
+        """
+        Get a lazy loader for a file, for executing the query
+        only once loader.data is accessed.
+        """
+        return HttpRequest(self._build_url(filename), decode_func)
