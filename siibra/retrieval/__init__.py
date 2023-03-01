@@ -19,7 +19,8 @@ from .repositories import (
     EbrainsHdgConnector,
     EbrainsPublicDatasetConnector,
     LocalFileRepository,
-    ZipfileConnector
+    ZipfileConnector,
+    TemplateflowConnector
 )
 from .requests import HttpRequest, ZipfileRequest, EbrainsRequest, SiibraHttpRequestError
 from .cache import CACHE

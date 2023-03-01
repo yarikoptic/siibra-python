@@ -665,3 +665,85 @@ class EbrainsPublicDatasetConnectorMinds(RepositoryConnector):
         """Get a lazy loader for a file, for executing the query
         only once loader.data is accessed."""
         return HttpRequest(self._build_url(folder, filename), decode_func)
+
+
+class TemplateflowConnector(RepositoryConnector):
+    """
+    Provides access to TemplateFlow archives.
+    """
+    _TF_REPO_BASE_URL = "https://api.github.com/repos/templateflow"
+    _TF_REPO_CONTENTS = requests.get(f"{_TF_REPO_BASE_URL}/templateflow/contents").json()
+    TEMPLATES = [
+        c["name"].removeprefix("tpl-") for c in _TF_REPO_CONTENTS
+        if not (c["name"].startswith(".") or c["name"].endswith((".json", ".md")))
+    ]
+
+    def __init__(self, abrvname):
+        """Construct a template query for TemplateFlow.
+
+        Parameters
+        ----------
+        template_name : str
+            A template name supported by TemplateFlow.
+        """
+        # TODO: make sure template_name is valid template name
+        if abrvname not in self.TEMPLATES:
+            raise RuntimeError(f"Please select a template from {self.TEMPLATES}")
+
+        RepositoryConnector.__init__(
+            self,
+            base_url=f"https://raw.githubusercontent.com/templateflow/tpl-{abrvname}"
+        )
+        self._abrvname = abrvname
+        self._description = HttpRequest(
+            self._build_url("template_description.json")
+        ).get()
+        self.name = self._description["Name"]
+
+    def _build_url(self, file: str = ""):
+        return f"{self.base_url}/master/{file}"
+
+    @property
+    def _contents(self):
+        content_url = f"{self._TF_REPO_BASE_URL}/tpl-{self._abrvname}/contents"
+        return [file["name"] for file in requests.get(content_url).json()
+                if not file["name"].startswith(".")]
+
+    @property
+    def authors(self):
+        return self._description["Authors"]
+
+    @property
+    def references(self):
+        return self._description["ReferencesAndLinks"]
+
+    @property
+    def species(self):
+        return self._description["Species"]
+
+    @property
+    def curators(self):
+        return self._description["Curators"]
+
+    @property
+    def templateflow_version(self):
+        return self._description["TemplateFlowVersion"]
+
+    @property
+    def resolutions(self):
+        return self._description["res"]
+
+    @property
+    def show_license(self):
+        return print(
+            HttpRequest(self._build_url("LICENSE")).data.decode("utf-8")
+        )
+
+    def search_files(self, spec, suffix: str = "") -> List[str]:
+        matches = []
+        for file in self._contents:
+            if (suffix is not None) and (not file.endswith(suffix)):
+                continue
+            if any(w in file.lower() for w in spec.split()):
+                matches.append(file)
+        return matches
