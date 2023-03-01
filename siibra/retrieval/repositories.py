@@ -701,12 +701,13 @@ class TemplateflowConnector(RepositoryConnector):
         self.name = self._description["Name"]
 
     def _build_url(self, file: str = ""):
-        return f"{self.base_url}/master/{file}"
+        return f"{self.base_url}/{file}"
 
     @property
     def _contents(self):
         content_url = f"{self._TF_REPO_BASE_URL}/tpl-{self._abrvname}/contents"
-        return [file["name"] for file in requests.get(content_url).json()
+        files_json = requests.get(content_url).json()
+        return [file["name"] for file in files_json
                 if not file["name"].startswith(".")]
 
     @property
@@ -735,18 +736,13 @@ class TemplateflowConnector(RepositoryConnector):
 
     @property
     def show_license(self):
-        return print(
-            HttpRequest(self._build_url("LICENSE")).data.decode("utf-8")
-        )
+        url = f"{self._TF_REPO_BASE_URL}/tpl-{self._abrvname}/LICENSE"
+        return print(HttpRequest(url).data.decode("utf-8"))
 
-    def search_files(self, spec, suffix: str = "") -> List[str]:
-        matches = []
-        for file in self._contents:
-            if (suffix is not None) and (not file.endswith(suffix)):
-                continue
-            if any(w in file.lower() for w in spec.split()):
-                matches.append(file)
-        return matches
+    def search_files(self, suffix: str = None) -> List[str]:
+        if suffix is not None:
+            return [file for file in self._contents if file.endswith(suffix)]
+        return self._contents
 
     def get_loader(self, filename, decode_func=None):
         """
