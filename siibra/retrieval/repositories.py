@@ -678,7 +678,7 @@ class TemplateflowConnector(RepositoryConnector):
         if not (c["name"].startswith(".") or c["name"].endswith((".json", ".md")))
     ]
 
-    def __init__(self, abrvname):
+    def __init__(self, identifier):
         """Construct a template query for TemplateFlow.
 
         Parameters
@@ -687,59 +687,92 @@ class TemplateflowConnector(RepositoryConnector):
             A template name supported by TemplateFlow.
         """
         # TODO: make sure template_name is valid template name
-        if abrvname not in self.TEMPLATES:
+        if identifier not in self.TEMPLATES:
             raise RuntimeError(f"Please select a template from {self.TEMPLATES}")
 
         RepositoryConnector.__init__(
             self,
-            base_url=f"https://templateflow.s3.amazonaws.com/tpl-{abrvname}"
+            base_url=f"https://templateflow.s3.amazonaws.com/tpl-{identifier}"
         )
-        self._abrvname = abrvname
+        self._identifier = identifier
         self._description = HttpRequest(
             self._build_url("template_description.json")
         ).get()
-        self.name = self._description["Name"]
+        self.name = self._description.get("Name", identifier)
 
     def _build_url(self, file: str = ""):
         return f"{self.base_url}/{file}"
 
     @property
     def _contents(self):
-        content_url = f"{self._TF_REPO_BASE_URL}/tpl-{self._abrvname}/contents"
+        # TODO: make it crawl in subfolders (only example is having cohorts?)
+        content_url = f"{self._TF_REPO_BASE_URL}/tpl-{self._identifier}/contents"
         files_json = requests.get(content_url).json()
         return [file["name"] for file in files_json
                 if not file["name"].startswith(".")]
 
     @property
     def authors(self):
-        return self._description["Authors"]
+        return self._description.get("Authors", "")
 
     @property
     def references(self):
-        return self._description["ReferencesAndLinks"]
+        return self._description.get("ReferencesAndLinks", "")
 
     @property
     def species(self):
-        return self._description["Species"]
+        return self._description.get("Species", "")
 
     @property
     def curators(self):
-        return self._description["Curators"]
-
-    @property
-    def templateflow_version(self):
-        return self._description["TemplateFlowVersion"]
+        return self._description.get("Curators", "")
 
     @property
     def resolutions(self):
-        return self._description["res"]
+        return self._description.get("res", "")
 
     @property
-    def show_license(self):
-        url = f"{self._TF_REPO_BASE_URL}/tpl-{self._abrvname}/LICENSE"
-        return print(HttpRequest(url).data.decode("utf-8"))
+    def space(self):
+        """
+        Checks if the space is preconfigured in Siibra and returns the space or
+        constructs a new one.
 
-    def search_files(self, suffix: str = None) -> List[str]:
+        Returns
+        -------
+        Space
+        """
+        from siibra import _space
+        # this space is supported but have naming issue
+        if self._identifier == "MNI152NLin2009cAsym":
+            return _space.Space.get_instance("MNI_152_ICBM_2009C_NONLINEAR_ASYMMETRIC")
+        # check the registry
+        for s in _space.Space.registry():
+            if s.matches(self._identifier):
+                return _space.Space.get_instance(s)
+
+        return self._build_space()
+
+    @property
+    def parcellations(self):
+        return list(self.maps.keys())
+
+    @property
+    def maps(self):
+        maps = {}
+        for f in self._contents:
+            if "atlas" in f:
+                f_trim = f[f.find("atlas") + 6:]
+                map_name = f_trim[:f_trim.find("_")]
+                if "desc" in f_trim:
+                    f_trim = f_trim[f_trim.find("desc") + 5:]
+                    map_name = map_name + " " + f_trim[:f_trim.find("_")]
+                if map_name in maps.keys():
+                    maps[map_name].append(f)
+                else:
+                    maps[map_name] = [f]
+        return maps
+
+    def search_files(self, suffix: str = None):
         if suffix is not None:
             return [file for file in self._contents if file.endswith(suffix)]
         return self._contents
@@ -750,3 +783,53 @@ class TemplateflowConnector(RepositoryConnector):
         only once loader.data is accessed.
         """
         return HttpRequest(self._build_url(filename), decode_func)
+
+    def _build_map(self, map_name):
+        parcellation = map_name
+        # get map info
+        labelling = self.get_loader(f"{map_name}.tsv").get()
+        cols = labelling.columns
+        # check contents of labeling
+        region_vocab = ["name", "structure"]
+        region_name_key = [c for c in cols if any(w in c.lower() for w in region_vocab)]
+        # create map details
+        indices = {}
+        vol_type_suffixes = {
+            ".nii.gz": "nii",
+            ".label.gii": "gii-label",
+            ".surf.gii": "gii-mesh"}
+
+        # return map
+        ## check if siibra support it already
+        ## or create a map
+        pass
+
+    def _build_space(self):
+        from ..configuration.factory import Factory
+        vol_type_suffixes = {".nii.gz": "nii", ".surf.gii": "gii-mesh"}
+        spec = {
+            "@id": f"templateflow/referencespace/v0.0.1/tmp-{self._identifier}",
+            "@type": "siibra/space/v0.0.1",
+            "name": self.name,
+            "shortName": self._identifier,
+            "modality": "templateflow",
+            "species": self.species,
+            "description": ("This reference space has been built using" +
+                "TemplateFlow archive. For details, see" +
+                f"{self._description['ReferencesAndLinks'][0]}"),
+            "volumes": self._get_volume_config(vol_type_suffixes),
+            "datasets": [],
+            "publications": []
+        }
+        return Factory.build_space(spec)
+
+    def _get_volume_config(self, vol_type_suffixes):
+        volumes = []
+        for suffix, provider_tpye in vol_type_suffixes.items():
+            for f in self._contents:
+                if f.endswith(suffix) and ("mask" not in f):
+                    volumes.append({
+                        "@type": "templateflow/volume/v0.0.1",
+                        "providers": {provider_tpye: self._build_url(f)}
+                    })
+        return volumes
