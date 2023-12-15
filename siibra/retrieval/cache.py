@@ -16,22 +16,24 @@
 
 import hashlib
 import os
+import pathlib
 from appdirs import user_cache_dir
 import tempfile
+from typing import Union
 
 from ..commons import logger, SIIBRA_CACHEDIR, SKIP_CACHEINIT_MAINTENANCE
 
 
-def assert_folder(folder):
+def assert_folder(folder: Union[str, pathlib.Path]) -> pathlib.Path:
     # make sure the folder exists and is writable, then return it.
     # If it cannot be written, create and return
     # a temporary folder.
     try:
-        if not os.path.isdir(folder):
-            os.makedirs(folder)
-        if not os.access(folder, os.W_OK):
+        path = pathlib.Path(folder) if isinstance(folder, str) else folder
+        path.mkdir(parents=True, exist_ok=True)
+        if not os.access(path, os.W_OK):
             raise OSError
-        return folder
+        return path
     except OSError:
         # cannot write to requested directory, create a temporary one.
         tmpdir = tempfile.mkdtemp(prefix="siibra-cache-")
@@ -40,13 +42,13 @@ def assert_folder(folder):
             f"the requested folder ({folder}) was not usable. "
             "Please consider to set the SIIBRA_CACHEDIR environment variable "
             "to a suitable directory.")
-        return tmpdir
+        return pathlib.Path(tmpdir)
 
 
 class Cache:
 
     _instance = None
-    folder = user_cache_dir(".".join(__name__.split(".")[:-1]), "")
+    folder = pathlib.Path(user_cache_dir(".".join(__name__.split(".")[:-1]), ""))
     SIZE_GIB = 2  # maintenance will delete old files to stay below this limit
 
     def __init__(self):
@@ -78,62 +80,57 @@ class Cache:
         self.folder = assert_folder(self.folder)
 
     def run_maintenance(self):
-        """ Shrinks the cache by deleting oldest files first until the total size
-        is below cache size (Cache.SIZE) given in GiB."""
+        """
+        Shrinks the cache by deleting oldest files first until the total size
+        is below cache size (Cache.SIZE) given in GiB.
+        """
         # build sorted list of cache files and their os attributes
-        files = [os.path.join(self.folder, fname) for fname in os.listdir(self.folder)]
-        sfiles = sorted([(fn, os.stat(fn)) for fn in files], key=lambda t: t[1].st_atime)
+        sfiles = sorted([(fn, fn.stat()) for fn in self], key=lambda st: st[1].st_atime)
 
-        # determine the first n files that need to be deleted to reach the accepted cache size
-        size_gib = sum(t[1].st_size for t in sfiles) / 1024**3
-        targetsize = size_gib
-        index = 0
-        for index, (fn, st) in enumerate(sfiles):
-            if targetsize <= self.SIZE_GIB:
+        current_size = self.size
+        for (fn, st) in sfiles:
+            if fn.is_dir():
+                size = sum(f.stat().st_size for f in fn.rglob('*'))
+                import shutil
+                shutil.rmtree(fn)
+            else:
+                size = st.st_size
+                fn.unlink()
+            current_size -= size / 1024**3
+            if current_size <= self.SIZE_GIB:
                 break
-            targetsize -= st.st_size / 1024**3
-
-        if index > 0:
-            logger.debug(f"Removing the {index+1} oldest files to keep cache size below {targetsize:.2f} GiB.")
-            for fn, st in sfiles[:index + 1]:
-                if os.path.isdir(fn):
-                    import shutil
-                    size = sum(os.path.getsize(f) for f in os.listdir(fn) if os.path.isfile(f))
-                    shutil.rmtree(fn)
-                else:
-                    size = st.st_size
-                    os.remove(fn)
-                size_gib -= size / 1024**3
 
     @property
     def size(self):
-        """ Return size of the cache in GiB. """
-        return sum(os.path.getsize(fn) for fn in self) / 1024**3
+        """Return size of the cache in GiB."""
+        return sum(fn.stat().st_size for fn in self.folder.rglob('*')) / 1024**3
 
     def __iter__(self):
-        """ Iterate all element names in the cache directory. """
-        return (os.path.join(self.folder, f) for f in os.listdir(self.folder))
+        """Iterate all element names in the cache directory. (Not recursive)"""
+        return self.folder.iterdir()
 
-    def build_filename(self, str_rep: str, suffix=None):
-        """Generate a filename in the cache.
-
-        Args:
-            str_rep (str): Unique string representation of the item. Will be used to compute a hash.
-            suffix (str, optional): Optional file suffix, in order to allow filetype recognition by the name. Defaults to None.
-
-        Returns:
-            filename
+    def build_filename(self, str_rep: str, suffix: str = None):
         """
-        hashfile = os.path.join(
-            self.folder, str(hashlib.sha256(str_rep.encode("ascii")).hexdigest())
-        )
-        if suffix is None:
-            return hashfile
+        Generate a filename in the cache.
+
+        Parameters
+        ----------
+        str_rep: str
+            Unique string representation of the item. Will be used to compute a hash.
+        suffix: str. Default: None
+            Optional file suffix, in order to allow filetype recognition by the name.
+
+        Returns
+        -------
+        pathlib.Path
+            file path in the cache
+        """
+        hexrep = str(hashlib.sha256(str_rep.encode("ascii")).hexdigest())
+        if suffix:
+            suffix = suffix if suffix.startswith(".") else "." + suffix
+            return self.folder.joinpath(hexrep).with_suffix(suffix)
         else:
-            if suffix.startswith("."):
-                return hashfile + suffix
-            else:
-                return hashfile + "." + suffix
+            return self.folder.joinpath(hexrep)
 
 
 CACHE = Cache.instance()

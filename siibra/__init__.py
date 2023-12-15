@@ -104,6 +104,13 @@ def set_feasible_download_size(maxsize_gbyte):
 
 
 def set_cache_size(maxsize_gbyte: int):
+    """
+    Set the disk space siibra will use as local cache.
+
+    Parameters
+    ----------
+    maxsize_gbyte: int
+    """
     assert maxsize_gbyte >= 0
     cache.SIZE_GIB = maxsize_gbyte
     logger.info(f"Set cache size to {maxsize_gbyte} GiB.")
@@ -153,5 +160,6 @@ def __dir__():
         "__version__",
         "cache",
         "warm_cache",
-        "create_map_from_volume"
+        "create_map_from_volume",
+        "set_cache_size"
     ]

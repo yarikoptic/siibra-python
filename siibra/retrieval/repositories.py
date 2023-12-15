@@ -238,7 +238,7 @@ class GitlabConnector(RepositoryConnector):
             return super().get(filename, folder, decode_func)
 
         ref = self.reftag if self.want_commit is None else self.want_commit["short_id"]
-        archive_directory = CACHE.build_filename(self.base_url + ref) if self.archive_mode else None
+        archive_directory = CACHE.build_filename(self.base_url + ref, suffix='.archived') if self.archive_mode else None
 
         if not os.path.isdir(archive_directory):
 
@@ -306,10 +306,6 @@ class ZipfileConnector(RepositoryConnector):
 
     def __eq__(self, other):
         return self.url == other.url
-
-    def clear_cache(self):
-        os.remove(self.zipfile)
-        self._zipfile_cached = None
 
     class ZipFileLoader:
         """
