@@ -113,11 +113,19 @@ dst_upload = {
 }
 
 """
-rules:
+proposal, DataProvider have a series of "step"'s, which describe everything, such as:
 
-1. all steps *must* accept an input (except src)
-2. all steps *must* produce an output (except dst)
-3. all steps should do their own input validation
+- how data is retrieved
+- how data is transformed
+- how data is saved/returned
+
+to note:
+
+- In the current implementation, Step is modelled as a class. So each subclass implement a `run` method.
+- The run method takes a positional argument (input), a cfg kwarg, and arbitary kwargs.
+- Each step *should* have proper type annotation (so static/runtime type check can be performed, to avoid runtime issue)
+- The steps may choose to ignore the input (would be the case for source steps, such as fetching )
+- similarly, the steps may choose to not return anything (i.e. return None), if it is a final step (e.g. save to a file)
 
 we can also create a text description on a "dry-run". e.g.
 
@@ -133,21 +141,91 @@ potentially, we can do things like forking/merging etc (need to be a bit careful
 
 """
 
-
-# example of implementation of a step processor
-def process_codec_vol_mask(input, *, cfg, **kwargs):
-    import nibabel as nib
-    import numpy as np
-
-    threshold = cfg.get("threshold")
-    assert isinstance(input, nib.nifti1.Nifti1Image)
-    dataobj = input.dataobj
-    dataobj = dataobj[dataobj > threshold]
-    return nib.nifti1.Nifti1Image(dataobj, affine=input.affine, header=input.header)
+import nibabel as nib
+from typing import Dict, Type
 
 
-def get_runner(*args, **kwargs):
-    pass
+class Step:
+    input: None
+    output: None
+    desc: str = "Noop"
+
+    step_register: Dict[str, Type["Step"]] = {}
+
+    def run(self, input, *, cfg, **kwargs):
+        return input
+
+    def __init_subclass__(cls, type: str = None) -> None:
+        if not type:
+            return
+        assert type not in cls.step_register, f"Already registered {type}"
+        cls.step_register[type] = cls
+
+    @classmethod
+    def get_runner(cls, step: Dict):
+        type = step.get("type")
+        assert type in cls.step_register, f"{type} not found in step register"
+        return cls.step_register[type]
+
+    @classmethod
+    def describe(cls, steps: List[Dict]):
+        descs = []
+        for idx, step in enumerate(steps, start=1):
+            runner = cls.get_runner(step)
+            descs.append(f"{idx} - {runner.desc.format(step)}")
+        return "\n".join(descs)
+
+
+class ReadAsNifti(Step, type="read/nibabel"):
+    input: bytes
+    output: nib.nifti1.Nifti1Image
+    desc = "Reads bytes into nifti"
+
+    def run(self, input, *, cfg, **kwargs):
+        assert isinstance(input, bytes)
+        import nibabel as nib
+
+        return nib.nifti1.Nifti1Image.from_bytes(input)
+
+
+class NiftiCodec(Step):
+    input: nib.nifti1.Nifti1Image
+    output: nib.nifti1.Nifti1Image
+    desc = "Transforms nifti to nifti"
+
+
+class NiftiMask(NiftiCodec, type="codec/vol/mask"):
+    desc = "Mask nifti according according to spec {cfg}"
+
+    def run(self, input, *, cfg, **kwargs):
+        import nibabel as nib
+
+        threshold = cfg.get("threshold")
+        assert isinstance(input, nib.nifti1.Nifti1Image)
+        dataobj = input.dataobj
+        dataobj = dataobj[dataobj > threshold]
+        return nib.nifti1.Nifti1Image(dataobj, affine=input.affine, header=input.header)
+
+    @classmethod
+    def from_threshold(cls, threshold=0):
+        return {"type": "codec/vol/mask", "threshold": threshold}
+
+
+from siibra.atlases.parcellationmap import Map
+from dataclasses import replace
+
+
+class DummyMap(Map):
+
+    # returns a Volume instance, with space_id
+    # when run is called, returns a masked nifti
+    def extract_regional_maps(self, regionname: str):
+        volumes = self.find_volumes(regionname)
+        assert len(volumes) == 1
+        volume = volumes[0]
+        volume.poststeps
+        mask_step = NiftiMask.from_threshold(0.2)
+        return replace(volume, poststeps=[*volume.poststeps, mask_step])
 
 
 # TODO should be renamed DataProvider / DataSource?
@@ -190,8 +268,8 @@ class Data(Attribute):
     def run(self):
         result = None
         for step in [*self.presteps, *self.steps, *self.poststeps]:
-            runner = get_runner(step)
-            result = runner(result)
+            runner = Step.get_runner(step)
+            result = runner.run(result)
         return result
 
     def get_data(self) -> bytes:
